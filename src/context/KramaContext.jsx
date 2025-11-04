@@ -1,11 +1,8 @@
 import React, { createContext, useState, useContext } from 'react';
-// Hapus import axios karena sudah dipindah ke service
-// import axios from 'axios'; 
-
-// IMPORT SERVICE BARU
-import kramaService from '../services/kramaService'; 
+import axios from 'axios';
 
 const KramaContext = createContext();
+const API_URL = 'http://127.0.0.1:8000/api'; // Ganti dengan URL API Anda
 
 export const useKrama = () => useContext(KramaContext);
 
@@ -15,69 +12,57 @@ export const KramaProvider = ({ children }) => {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState(null);
 
-    // --- FUNGSI MENGGUNAKAN SERVICE BARU ---
-
-    /**
-     * Fungsi untuk mencari Krama berdasarkan ID atau NIK dan mendapatkan detail tagihan aktif.
-     * @param {string|number} nikOrId ID Krama atau NIK
-     */
-    const fetchKramaDetail = async (nikOrId) => {
+    // Fungsi untuk mencari Krama dan mendapatkan detail tagihan
+    const fetchKramaDetail = async (kramaId) => {
         setIsLoading(true);
         setError(null);
-        setKramaData(null);
-        setTagihanDetail(null);
-
         try {
-            // Panggil fungsi service, bukan axios langsung
-            // Asumsi service mengembalikan { krama: {...}, tagihan_aktif: {...} }
-            const data = await kramaService.fetchKramaDetail(nikOrId);
+            // Memanggil endpoint DataKramaController@show
+            const response = await axios.get(`${API_URL}/kramas/${kramaId}`); 
             
-            setKramaData(data.krama);
-            setTagihanDetail(data.tagihan_aktif); 
+            setKramaData(response.data);
             
-            // Catatan: Anda mungkin ingin alert/notifikasi jika tagihan_aktif null/kosong
-            
+            // Mengambil tagihan aktif yang statusnya 'Belum Lunas' (jika ada)
+            const tagihanAktif = response.data.ringkasan_tagihan.filter(
+                (t) => t.status !== 'selesai'
+            );
+
+            // Kita asumsikan hanya memproses tagihan pertama yang belum lunas
+            if (tagihanAktif.length > 0) {
+                setTagihanDetail(tagihanAktif[0]);
+            } else {
+                setTagihanDetail(null); // Semua lunas
+            }
+
         } catch (err) {
-            // Error ditangani di service, di sini kita hanya menampilkan pesan yang dikembalikan
-            setError(err.message || "Gagal mencari data Krama.");
+            setError('Gagal mengambil data Krama. ID mungkin tidak valid.');
+            setKramaData(null);
+            setTagihanDetail(null);
+            console.error(err);
         } finally {
             setIsLoading(false);
         }
     };
     
-    /**
-     * Fungsi untuk memproses pembayaran dan mencatatnya ke database.
-     * @param {number} tagihanId ID tagihan yang dibayar
-     * @param {number} jumlahPembayaran Jumlah yang dibayarkan
-     */
-    const processPayment = async (tagihanId, jumlahPembayaran) => {
+    // Fungsi untuk memproses pembayaran
+    const processPayment = async (tagihanId, jumlah) => {
         setIsLoading(true);
-        setError(null);
-        
         try {
-             // Panggil fungsi service untuk pembayaran
-            const paymentResponse = await kramaService.processPayment(tagihanId, jumlahPembayaran);
+            // Memanggil endpoint PembayaranController@store
+            const response = await axios.post(`${API_URL}/pembayarans`, {
+                tagihan_id: tagihanId,
+                jumlah: jumlah, // Total tagihan yang harus dibayar
+                metode: 'Tunai', // Default, bisa dikembangkan ke QRIS/Transfer
+            });
             
-            // Tampilkan pesan sukses dari backend
-            alert(paymentResponse.message); 
-            
-            // **PENTING:** Refresh data Krama setelah pembayaran
-            if (kramaData && kramaData.krama_id) {
-                 await fetchKramaDetail(kramaData.krama_id);
-            } else {
-                // Jika kramaData null, tidak bisa refresh.
-                // Reset tagihan detail sebagai indikasi pembayaran berhasil.
-                setTagihanDetail(null);
-            }
-            
-            return paymentResponse;
+            alert(response.data.message);
+            // Setelah berhasil, refetch data krama untuk update status
+            await fetchKramaDetail(kramaData.krama_id); 
             
         } catch (err) {
-            // Error ditangani di service, di sini kita hanya menampilkan pesan
-            const errorMessage = err.message || "Gagal memproses pembayaran. Cek log konsol.";
-            setError(errorMessage);
-            alert(`Pembayaran Gagal: ${errorMessage}`);
-            throw err; // Re-throw agar bisa ditangkap di komponen yang memanggil (misal untuk modal/loading state)
+            setError('Gagal memproses pembayaran. Cek log konsol.');
+            console.error("Payment Error:", err.response ? err.response.data : err);
+            alert(`Pembayaran Gagal: ${err.response?.data?.message || 'Terjadi kesalahan.'}`);
         } finally {
             setIsLoading(false);
         }
@@ -86,14 +71,7 @@ export const KramaProvider = ({ children }) => {
 
     return (
         <KramaContext.Provider 
-            value={{ 
-                kramaData, 
-                tagihanDetail, 
-                isLoading, 
-                error, 
-                fetchKramaDetail, 
-                processPayment 
-            }}
+            value={{ kramaData, tagihanDetail, isLoading, error, fetchKramaDetail, processPayment }}
         >
             {children}
         </KramaContext.Provider>
